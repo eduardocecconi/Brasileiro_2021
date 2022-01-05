@@ -1,0 +1,416 @@
+---
+title: "Brasileiro_2021_CFA"
+author: "Eduardo Cecconi"
+date: "1/4/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+library(lavaan)
+library(tidyverse)
+library(readxl)
+library(stats)
+library(psych)
+library(semPlot)
+library(stats)
+```
+
+# Análise Fatorial Confirmatória
+
+## Dados do Campeonato Brasileiro 2021 extraídos do InStat
+
+Como parte do treinamento em programação e em estatística, submeti dados de scout    
+de de 379 dos 380 jogos do Campeonato Brasileiro 2021 (o InStat não disponibilizou    
+os dados do jogo Chapecoense 1x1 Athletico, pela 26ª rodada) a diversas técnicas,  
+a começar pela Análise Fatorial Confirmatória.
+
+O primeiro passo foi realizar o data wrangling para estruturar o banco de dados  
+e proporcionar a elaboração das métricas e dos indicadores que posteriormente  
+passarão pelo processo de validação.  
+
+Originalmente com 115 variáveis, constatei a ausência de pelo menos 4 informações  
+relevantes e fáceis de serem adicionadas ao banco, com o uso da função *case_when()*,  
+a partir da criação de uma variável chave para facilitar o código - identificar em  
+cada jogo o mandante (H, de Home), e o visitante (A, de Away):  
+
+* Pontos (Points)  
+* Gols Concedidos (Goals_Conceded)  
+* Chutes Concedidos (Shots_Conceded)  
+* Finalizações Concedidas em Bolas Paradas (Set_Pieces_Conceded)   
+
+```{r message=FALSE, warning=FALSE}
+
+Brasileiro_2021 <- read_excel("Brasileiro_Matchs_2021.xlsx")
+
+Brasileiro_2021 <- Brasileiro_2021 %>% 
+                      mutate(Local = rep(c("H", "A"), times = 379)) %>%
+                      select(1:3, Local, everything()) 
+
+Brasileiro_2021 <- Brasileiro_2021 %>% 
+                      mutate(Goals_Conceded = case_when(
+                              Brasileiro_2021$Local == "H" ~ lead(Brasileiro_2021$Goals),
+                              Brasileiro_2021$Local == "A" ~ lag(Brasileiro_2021$Goals)),
+                             Set_Pieces_Conceded = case_when(
+                              Brasileiro_2021$Local == "H" ~ lead(Brasileiro_2021$`Attacks with shots 0 Set pieces attacks` ),
+                              Brasileiro_2021$Local == "A" ~ lag(Brasileiro_2021$`Attacks with shots 0 Set pieces attacks`)),
+                             Shots_Conceded = case_when(
+                              Brasileiro_2021$Local == "H" ~ lead(Brasileiro_2021$`Shots on target`),
+                              Brasileiro_2021$Local == "A" ~ lag(Brasileiro_2021$`Shots on target`))) %>%
+                             select(1:5, Goals_Conceded, Shots_Conceded, Set_Pieces_Conceded, everything())
+
+Brasileiro_2021 <- Brasileiro_2021 %>% 
+                      mutate(Points = case_when(
+                            Brasileiro_2021$Goals == Brasileiro_2021$Goals_Conceded ~ 1,
+                            Brasileiro_2021$Goals > Brasileiro_2021$Goals_Conceded ~ 3,
+                            Brasileiro_2021$Goals < Brasileiro_2021$Goals_Conceded ~ 0)) %>%
+                      select(1:3, Points, everything())
+```
+
+Das 120 variáveis resultantes, filtrei apenas 39 para construir as métricas,  
+em um novo banco de dados, onde foram transformadas em 12 indicadores-chave em um  
+arquivo com 24 variáveis no total. Os termos utilizados no código estão em inglês  
+(como *CFA*, de *Confirmatory Factor Analysis*), para facilitar a futura tradução  
+do artigo.  
+
+```{r message=FALSE, warning=FALSE}
+
+Metrics_CFA <- Brasileiro_2021 %>% select(Teams, Points, Goals, Goals_Conceded, 
+                                             `Accurate passes`, Fouls, Passes,
+                                             `Key passes accurate`, `Ball recoveries`, 
+                                             `Ball possession, %`, `Ball possessions, quantity`,
+                                             `Ball recoveries in opponent's half`,
+                                             `Team pressing successful`, `Opponent's xG`,
+                                             `xG (Expected goals)`, `Dribbles successful`,
+                                             `Defensive challenges won`,  Building0ups,
+                                             `Ball interceptions`, `High pressing successful`,
+                                             `Low pressing successful`, `Expected points`,
+                                             `Opponent's passes per defensive action`,
+                                             `Average duration of ball possession, min`,
+                                             `Positional attacks with shots`, 
+                                             `Counter0attacks with a shot`, `Yellow cards`,
+                                             `Red cards`, `Crosses accurate`,
+                                             `Attacking challenges won`,
+                                             `Air challenges won`, `Tackles successful`,
+                                             `Lost balls`, `Lost balls in own half`,
+                                             `Entrances on opponent's half`,
+                                             `Entrances on final third of opponent's half`,
+                                             `Entrances to the opponent's box`,
+                                             `Attacks with shots 0 Set pieces attacks`,
+                                              Set_Pieces_Conceded, Shots_Conceded) %>%
+                                       rename(Expected_Points = `Expected points`,
+                                              xG = `xG (Expected goals)`,
+                                              Positional_shot = `Positional attacks with shots`,
+                                              Counter_shot = `Counter0attacks with a shot`, 
+                                              Set_Piece_shot = `Attacks with shots 0 Set pieces attacks`,
+                                              Key_Passes_acc = `Key passes accurate`,
+                                              Crosses_acc = `Crosses accurate`, 
+                                              Dribbles_acc = `Dribbles successful`,
+                                              xG_Conceded = `Opponent's xG`,
+                                              Interceptions = `Ball interceptions`,
+                                              Team_Pressing = `Team pressing successful`,
+                                              High_press_acc = `High pressing successful`,
+                                              Low_press_acc = `Low pressing successful`,
+                                              Recoveries = `Ball recoveries`,
+                                              Recoveries_High = `Ball recoveries in opponent's half`,
+                                              PPDA = `Opponent's passes per defensive action`,
+                                              Duels_def = `Defensive challenges won`, 
+                                              Duels_ata = `Attacking challenges won`,
+                                              Duels_air = `Air challenges won`, 
+                                              Tackles_acc = `Tackles successful`,
+                                              Yellow_Card = `Yellow cards`,
+                                              Red_Card = `Red cards`,
+                                              Passes_acc = `Accurate passes`,
+                                              Possession_Time = `Ball possession, %`,
+                                              Possession_Quant = `Ball possessions, quantity`,
+                                              Time_per_possession = `Average duration of ball possession, min`,
+                                              Build_Total = Building0ups,
+                                              Lost_Balls = `Lost balls`, 
+                                              Lost_Balls_own = `Lost balls in own half`,
+                                              Second_third = `Entrances on opponent's half`,
+                                              Final_third = `Entrances on final third of opponent's half`,
+                                              Box = `Entrances to the opponent's box`) %>%
+                                       mutate(Conversion = Goals / xG,
+                                              Conversion_Points = Points / Expected_Points,
+                                              Attacks_Shot = Positional_shot + 
+                                                             Counter_shot + Set_Piece_shot,
+                                              Shot_Assist = Key_Passes_acc + Crosses_acc,
+                                              Conversion_Conceded = Goals_Conceded / 
+                                                                    xG_Conceded,
+                                              Imposition = (Duels_def + Duels_ata + Duels_air) - 
+                                                           (Fouls + Red_Card + Yellow_Card),
+                                              Contention = log(Tackles_acc + Recoveries + 
+                                                           Interceptions + Low_press_acc),
+                                              Pressing = Recoveries_High + High_press_acc + 
+                                                         Team_Pressing,
+                                              Ball_Care = log((Passes_acc + Dribbles_acc) - Lost_Balls),
+                                              Passing_Speed = 10* ((Passes / Possession_Quant) / 
+                                                              Time_per_possession),
+                                              Build_Up = Build_Total - Lost_Balls_own,
+                                              Progression = (Second_third - Final_third) +
+                                                            (Final_third - Box)) %>%
+                                       select(Teams, Points, Expected_Points, 
+                                              Conversion_Points, Goals, xG, Attacks_Shot,
+                                              Conversion, Shot_Assist, Goals_Conceded, 
+                                              xG_Conceded, Conversion_Conceded, Shots_Conceded, 
+                                              Contention, Pressing, Imposition, PPDA,
+                                              Possession_Time, Passing_Speed, Ball_Care,
+                                              Build_Up, Progression, Set_Piece_shot,
+                                              Set_Pieces_Conceded)
+```
+
+Em resumo, estes são os conceitos utilizados na elaboração das métricas:  
+
+* *Conversion:* razão entre os gols marcados e a expectativa de gol (xG), para  
+privilegiar a eficiência;  
+* *Attacks_Shot:* soma dos chutes realizados em 3 origens distintas de ataques  
+(Posicionais, Transições e Bolas Paradas), o que na execução em si da AFC tem  
+pouca importância, mas pode subsidiar paralelamente gráficos para identificar  
+diferentes estilos de jogo ofensivo;
+* *Shot_Assist:* soma dos passes-decisivos e dos cruzamentos que geraram  
+finalização;  
+* *Conversion_Conceded:* razão entre gols sofridos e expectativa concedida;  
+* *Imposition:* soma das vitórias pessoais em três tipos de duelos listados  
+(ofensivos, defensivos e aéreos), subtraída a soma de três tipos de infrações  
+(faltas cometidas, cartões amarelos e vermelhos recebidos);  
+* *Contention:* soma de quatro ações defensivas listadas: tackles (um item de scout  
+comum nas plataformas dominantes mas que, na prática, não existe no Brasil, onde  
+o conceito disseminado é uma espécie de fusão entre tackles e recoveries - a  
+*Roubada*), recuperações, interceptações e pressão baixa eficiente;  
+* *Pressing:* soma de três ações de pressão listadas: recuperações no campo de  
+ataque, pressão alta eficiente e o que o InStat chama de "team pressing", e que  
+embora vago quando analisado nos vídeos, é uma espécie de "pressão na bola";  
+* *Ball_Care:* relação entre passes certos e dribles certos com as perdas de bola;  
+* *Passing_Speed:* este indicador é uma adaptação do conceito de VEL (velocidade  
+de circulação da bola); sem a cronologia das ações nos dados extraídos, estimei o  
+tempo individual de retenção da bola por jogada através do cruzamento de três  
+variáveis originais: passes certos, quantidade de posses de bola e tempo médio  
+(em segundos) de cada posse;  
+* *Build-up:* subtração entre a variável "construção", disponibilizada nos dados  
+originais, e perdas de bola no próprio campo;  
+* *Progression:* relação entre as quantidades de ingressos da equipe do campo de  
+defesa para o de ataque, do campo de ataque para o terço final, e do terço final  
+para a área adversária;
+* *PPDA:* Passes permitidos por ação defensiva, em inglês, variável que já foi  
+entregue originalmente pelo InStat, sem necessitar de manipulação. Conta a  
+quantidade de passes que o adversário troca na construção até que a equipe realize  
+alguma ação defensiva.
+
+Como as correlações, variâncias e covariâncias são a base deste método, podemos  
+explorar as respectivas tabelas, aplicadas ao novo banco de dados:  
+
+```{r message=FALSE, warning=FALSE}
+
+correlation <- cor(Metrics_CFA[ , 2:24])
+
+covariance <- cov(Metrics_CFA[ , 2:24])
+
+variance <- var(Metrics_CFA[ , 2:24])
+```
+
+Além disso, também é importante ajustar as relações de medidas entre métricas que  
+resultaram em escalas distintas, o que poderia causar problemas para interpretar  
+os resultados, fechando com o arredondamento para duas casas decimais. 
+
+```{r message=FALSE, warning=FALSE}
+
+Metrics_CFA[, c(7, 13:17, 20:22)] <- apply(Metrics_CFA[, c(7, 13:17, 20:22)],  2, scale)
+
+Metrics_CFA <- Metrics_CFA %>% mutate_if(is.numeric, round, 2)
+```
+
+Serão testadas *quatro variáveis latentes* (os indicadores-chave, ou fatores) em  
+separado, e depois todas agrupadas em um único modelo: *Ataque, Defesa, Posse e  * 
+*Bolas Paradas.* A aritmética é simples, apenas somas, porque carecem de maior  
+estudo estatístico para envolverem pesos atribuídos com multiplicações, etc.
+
+## ATAQUE  
+O modelo de ataque relaciona quatro variáveis: *gols marcados, conversão, chutes*    
+*e assistências para finalização*.  
+
+Os índices de ajuste foram baixos: CFI = 0.696 (ideal acima de 0.9); TLI = 0.088  
+(ideal acima de 0.9); RMSEA = 0.435 (ideal entre 0.05 e 0.08) e SRMR = 0.183 (ideal  
+inferior a 0.05).  
+
+Não é motivo para desânimo, entretanto. Futebol, sabe-se, é um esporte onde a  
+imprevisibilidade interfere mais do que em outros esportes, e muito mais se  
+comparado a dados oriundos do mundo empresarial. Muitas vezes a elaboração de  
+indicadores no futebol não é relevante para prever resultados, e sim para  
+*identificar padrões de comportamento*, para *identificar o estilo* de cada  
+equipe, e aí sim agregar informação relevante para a comissão técnica basear  
+decisões.
+
+```{r message=FALSE, warning=FALSE}
+
+Attack_Model <- ' Attack =~ Goals + Conversion + Attacks_Shot + Shot_Assist '        
+
+Fit_Attack_Model <- cfa(Attack_Model, data= Metrics_CFA)
+
+summary(Fit_Attack_Model, fit.measures = TRUE, standardized = TRUE)
+```
+
+## DEFESA  
+O modelo de defesa relaciona seis variáveis: *gols sofridos, conversão concedida,  *
+*pressão, contenção, chutes permitidos e PPDA*. Comparado ao ataque, a variável  
+latente defensiva alcançou índices de ajuste melhores: CFI = 0.787 (ideal acima de  
+0.9); TLI = 0.645 (ideal acima de 0.9); RMSEA = 0.179 (ideal entre 0.05 e 0.08) e  
+SRMR = 0.108 (ideal inferior a 0.05). Não houve registro de variância negativa.
+
+```{r message=FALSE, warning=FALSE}
+
+Defense_Model <- ' Defense =~ Goals_Conceded + Pressing + Conversion_Conceded + Contention + PPDA + Shots_Conceded '
+
+Fit_Defense_Model <- cfa(Defense_Model, data= Metrics_CFA)
+
+summary(Fit_Defense_Model, fit.measures = TRUE, standardized = TRUE)
+```
+
+## POSSE  
+O modelo de posse relaciona seis variáveis: *tempo de posse, velocidade de circulação,*  
+*proteção, construção, progressão e imposição*. Temos uma tendência natural a  
+associar o conceito de imposição com a defesa, mas como os dados envolvem todos os  
+tipos de ações que o InStat considera "duelos" (muitos dos duelos ofensivos e aéreos  
+não têm relação com ações defensivas, portanto), esta métrica serve como referência  
+de obtenção de posse.
+
+Embora novamente sem atingir os índices ideais de ajuste, o desempenho no teste  
+também melhorou (comparado à defesa, à exceção do RMSEA):  
+CFI = 0.833 (ideal acima de 0.9); TLI = 0.721 (ideal acima de 0.9); RMSEA = 0.242   
+(ideal entre 0.05 e 0.08) e SRMR = 0.081 (ideal inferior a 0.05).
+
+```{r message=FALSE, warning=FALSE}
+
+Possession_Model <- ' Possession =~ Possession_Time + Passing_Speed + Ball_Care + Build_Up + Progression + Imposition '
+
+Fit_Possession_Model <- cfa(Possession_Model, data= Metrics_CFA)
+
+summary(Fit_Possession_Model, fit.measures = TRUE, standardized = TRUE)
+```
+
+## BOLAS PARADAS  
+Este modelo tem a relação entre apenas duas métricas: *finalizações realizadas e  *
+*concedidas em bolas paradas*. Embora seja um item muito relevante sob a ótica  
+dos treinadores, sempre atentos a padrões de bolas paradas que possam ser prevenidos  
+ou aproveitados nas partidas, estatisticamente o modelo não conseguiu ser identificado.  
+
+Para o fator ser testado, foi preciso restringir as cargas com o uso do *a**, um  
+conceito com o qual ainda não estou familiarizado, e que retira potencial informativo  
+deste indicador. Por enquanto, com os dados disponíveis no banco extraído para  
+realizar este teste, das bolas paradas não se consegue obter informação relevante.
+
+```{r message=FALSE, warning=FALSE}
+
+Set_Pieces_Model <- ' Set_Pieces =~ a*Set_Piece_shot + a*Set_Pieces_Conceded '
+
+Fit_Set_Pieces_Model <- cfa(Set_Pieces_Model, data= Metrics_CFA)
+
+summary(Fit_Set_Pieces_Model, fit.measures = TRUE, standardized = TRUE)
+```
+
+## MODELO FINAL  
+Com a irrelevância estatística do modelo de bolas paradas, devido à superficialidade  
+dos dados disponíveis, este fator foi excluído do modelo final, evitando problemas  
+na execução do código.  
+
+A ordem das métricas dentro dos indicadores também foi alterada, porque na definição  
+dos modelos a primeira variável recebe carga padrão = 1, e se tornou importante que  
+os gols feitos e sofridos não passessem por este filtro.
+
+```{r message=FALSE, warning=FALSE}
+
+Total_Model <- '
+              Attack =~ Conversion + Goals + Attacks_Shot + Shot_Assist
+              Defense =~ Conversion_Conceded + Goals_Conceded + Pressing + Contention + PPDA + Shots_Conceded 
+              Possession =~ Possession_Time + Passing_Speed + Ball_Care + Build_Up + Progression + Imposition
+              kpi =~ Possession + Attack + Defense
+              '                                              
+
+Fit_Total_Model <- cfa(Total_Model, data= Metrics_CFA, check.gradient = FALSE)
+                                       
+summary(Fit_Total_Model, fit.measures = TRUE, standardized = TRUE)
+```
+
+Como esperado, os índices de ajuste ficaram baixos, o que não invalida essa metodologia  
+de análise de indicadores aplicada ao futebol. É preciso ampliar o estudo sobre  
+as possibilidades matemáticas estatisticamente amparadas na formulação das relações  
+entre as métricas que compõem os indicadores, atribuindo diferentes pesos; e também  
+é importante reiterar a análise como instrumento de identificação de padrões e de  
+estilos de jogo, sem deixar de olhar para volumes e eficiências.
+
+![](/Volumes/Seagate Expansion Drive/Data Science/USP/SoftwareR/Sripts/tabela.png)
+
+```{r message=FALSE, warning=FALSE}
+
+fit_indices <- c("Índice", "Resultado", "Parâmetro", "CFI", 0594, "> 0.9", "TLI", 0.518, "> 0.9", 
+                 "RMSEA", 0.176, "< 0.05", "SRMR", 0.164, "< 0.08")
+
+fit_indices_tabela <- matrix(fit_indices, nrow = 5, ncol = 3, byrow = TRUE)
+```
+
+A visualização do modelo é simples, com os indicadores de primeira ordem ataque,  
+posse e defesa relacionados com o KPI (Key Performance Indicator), que soma todos  
+os demais:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+semPaths(Fit_Total_Model, "par", weighted = FALSE, nCharNodes = 7, shapeMan = "rectangle",
+         sizeMan = 8, sizeMan2 = 5)
+```
+## Ranking  
+
+Apesar de a AFC não ter encontrado indicadores altos de relevância para o modelo,  
+o objetivo da análise fatorial neste caso, desde o início, foi a criação de um  
+ranking das equipes do Brasileiro 2021. Para isto, os fatores latentes precisam  
+ser construídos não apenas apontando as relações (como ocorreu no modelo), mas  
+também seguindo as operações matemáticas - na defesa, por exemplo, os gols sofridos,  
+o perigo concedido e os chutes permitidos subtraem o valor total das ações  
+defensivas como pressão, contenção e PPDA. E, devido à importância do tema para  
+a análise de comportamentos, incluí o indicador de bolas paradas no cálculo,  
+contrariando o modelo avaliado e ignorando a superficialidade dos dados.
+
+```{r message=FALSE, warning=FALSE}
+
+ranking <- Metrics_CFA %>% mutate(Attack = Conversion + Goals + Attacks_Shot + Shot_Assist,
+                                     Defense = (Pressing + Contention + PPDA) - 
+                                       (Conversion_Conceded + Goals_Conceded + Shots_Conceded),
+                                     Possession = Possession_Time + Passing_Speed + 
+                                       Ball_Care + Build_Up + Progression + Imposition,
+                                     Set_Pieces = Set_Piece_shot - Set_Pieces_Conceded,
+                                     KPI = Attack + Defense + Possession + Set_Pieces) %>%
+                              select(Teams, KPI, Attack, Defense, Possession, Set_Pieces) 
+
+ranking[, c(2:6)] <- apply(Metrics_CFA[, c(2:6)],  2, scale)
+
+ranking <- ranking %>% mutate_if(is.numeric, round, 2)
+
+ranking_total <- ranking %>% group_by(Teams) %>% 
+                             summarise(Attack_Total=sum(Attack),
+                                       Defense_Total=sum(Defense),
+                                       Possession_Total=sum(Possession),
+                                       Set_Pieces=sum(Set_Pieces),
+                                       KPI_Total = sum(KPI)) %>%
+                             select(Teams, KPI_Total, Attack_Total, Defense_Total, Possession_Total, Set_Pieces) %>%
+                             arrange(desc(KPI_Total))
+```
+
+E, para minha surpresa, *o ranking resultante* de todo este processo apresentado  
+através da análise fatorial confirmatória é *exatamente igual à colocação final das  *
+*20 equipes do Brasileiro*:  
+
+![](/Volumes/Seagate Expansion Drive/Data Science/USP/SoftwareR/Sripts/ranking.png)
+Mesmo sem levar em consideração itens como pontos e expectativa de pontos, que  
+serão abordados em artigo exercitando a regressão múltipla, e apesar dos índices  
+baixos nos testes de ajuste dos fatores, o ranking bate com a classificação do 1º  
+ao 20º.  
+
+É curioso como o Flamengo lidera 3 dos 4 indicadores-chave, à exceção da defesa,  
+o que foi determinante para o Atlético-MG terminar em 1º no ranking. Outro aspecto  
+interessante do ranking é observado no Grêmio: 3º em ataque, 6º em bolas paradas  
+e 7º em posse, mas o 20º lugar em defesa o colocou em 17º no ranking geral.
+
+*Gráficos e demais análises das variáveis originais e das métricas*, proporcionando  
+mais subsídios para a análise do desempenho das equipes do Brasileiro 2021, serão  
+também disponibilizados em *artigos onde testarei não apenas a regressão múltipla,  *
+*mas também a análise fatorial exploratória*.

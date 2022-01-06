@@ -1,0 +1,472 @@
+---
+title: "Brasileiro_2021_EFA"
+author: "Eduardo Cecconi"
+date: "6/4/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+library(lavaan)
+library(tidyverse)
+library(readxl)
+library(stats)
+library(psych)
+library(semPlot)
+library(stats)
+```
+
+# Análise Fatorial Exploratória  
+
+## Dados do Campeonato Brasileiro 2021 extraídos do InStat  
+
+Assim como na Análise Fatorial Confirmatória que publiquei recentemente (neste  
+link, [](http://https://rpubs.com/eduardocecconi/853211), o processo inicial foi  
+o mesmo para iniciar a Análise Fatorial Exploratória (AFE).
+
+O banco de dados é o mesmo, extraído do provedor InStat com 115 variáveis de 379  
+jogos do Campeonato Brasileiro 2021; o primeiro passo é o data wrangling, que  
+neste caso se baseia na criação da variável "Local", definindo os mandantes (H)  
+e visitantes (A) de cada partida, para servir de referência à construção do  
+código de outras quatro variáveis:
+
+* Pontos (Points)  
+* Gols Concedidos (Goals_Conceded)  
+* Chutes Concedidos (Shots_Conceded)  
+* Finalizações Concedidas em Bolas Paradas (Set_Pieces_Conceded)   
+
+```{r message=FALSE, warning=FALSE}
+
+Brasileiro_2021 <- read_excel("Brasileiro_Matchs_2021.xlsx")
+
+Brasileiro_2021 <- Brasileiro_2021 %>% 
+                      mutate(Local = rep(c("H", "A"), times = 379)) %>%
+                      select(1:3, Local, everything()) 
+
+Brasileiro_2021 <- Brasileiro_2021 %>% 
+                      mutate(Goals_Conceded = case_when(
+                              Brasileiro_2021$Local == "H" ~ lead(Brasileiro_2021$Goals),
+                              Brasileiro_2021$Local == "A" ~ lag(Brasileiro_2021$Goals)),
+                             Set_Pieces_Conceded = case_when(
+                              Brasileiro_2021$Local == "H" ~ lead(Brasileiro_2021$`Attacks with shots 0 Set pieces attacks` ),
+                              Brasileiro_2021$Local == "A" ~ lag(Brasileiro_2021$`Attacks with shots 0 Set pieces attacks`)),
+                             Shots_Conceded = case_when(
+                              Brasileiro_2021$Local == "H" ~ lead(Brasileiro_2021$`Shots on target`),
+                              Brasileiro_2021$Local == "A" ~ lag(Brasileiro_2021$`Shots on target`))) %>%
+                             select(1:5, Goals_Conceded, Shots_Conceded, Set_Pieces_Conceded, everything())
+
+Brasileiro_2021 <- Brasileiro_2021 %>% 
+                      mutate(Points = case_when(
+                            Brasileiro_2021$Goals == Brasileiro_2021$Goals_Conceded ~ 1,
+                            Brasileiro_2021$Goals > Brasileiro_2021$Goals_Conceded ~ 3,
+                            Brasileiro_2021$Goals < Brasileiro_2021$Goals_Conceded ~ 0)) %>%
+                      select(1:3, Points, everything())
+```
+
+Das 120 variáveis resultantes, 39 foram selecionadas para a elaboração das métricas,    
+formando um novo banco de dados com 24 variáveis:  
+
+```{r message=FALSE, warning=FALSE}
+
+Metrics_EFA <- Brasileiro_2021 %>% select(Teams, Points, Goals, Goals_Conceded, 
+                                             `Accurate passes`, Fouls, Passes,
+                                             `Key passes accurate`, `Ball recoveries`, 
+                                             `Ball possession, %`, `Ball possessions, quantity`,
+                                             `Ball recoveries in opponent's half`,
+                                             `Team pressing successful`, `Opponent's xG`,
+                                             `xG (Expected goals)`, `Dribbles successful`,
+                                             `Defensive challenges won`,  Building0ups,
+                                             `Ball interceptions`, `High pressing successful`,
+                                             `Low pressing successful`, `Expected points`,
+                                             `Opponent's passes per defensive action`,
+                                             `Average duration of ball possession, min`,
+                                             `Positional attacks with shots`, 
+                                             `Counter0attacks with a shot`, `Yellow cards`,
+                                             `Red cards`, `Crosses accurate`,
+                                             `Attacking challenges won`,
+                                             `Air challenges won`, `Tackles successful`,
+                                             `Lost balls`, `Lost balls in own half`,
+                                             `Entrances on opponent's half`,
+                                             `Entrances on final third of opponent's half`,
+                                             `Entrances to the opponent's box`,
+                                             `Attacks with shots 0 Set pieces attacks`,
+                                              Set_Pieces_Conceded, Shots_Conceded) %>%
+                                       rename(Expected_Points = `Expected points`,
+                                              xG = `xG (Expected goals)`,
+                                              Positional_shot = `Positional attacks with shots`,
+                                              Counter_shot = `Counter0attacks with a shot`, 
+                                              Set_Piece_shot = `Attacks with shots 0 Set pieces attacks`,
+                                              Key_Passes_acc = `Key passes accurate`,
+                                              Crosses_acc = `Crosses accurate`, 
+                                              Dribbles_acc = `Dribbles successful`,
+                                              xG_Conceded = `Opponent's xG`,
+                                              Interceptions = `Ball interceptions`,
+                                              Team_Pressing = `Team pressing successful`,
+                                              High_press_acc = `High pressing successful`,
+                                              Low_press_acc = `Low pressing successful`,
+                                              Recoveries = `Ball recoveries`,
+                                              Recoveries_High = `Ball recoveries in opponent's half`,
+                                              PPDA = `Opponent's passes per defensive action`,
+                                              Duels_def = `Defensive challenges won`, 
+                                              Duels_ata = `Attacking challenges won`,
+                                              Duels_air = `Air challenges won`, 
+                                              Tackles_acc = `Tackles successful`,
+                                              Yellow_Card = `Yellow cards`,
+                                              Red_Card = `Red cards`,
+                                              Passes_acc = `Accurate passes`,
+                                              Possession_Time = `Ball possession, %`,
+                                              Possession_Quant = `Ball possessions, quantity`,
+                                              Time_per_possession = `Average duration of ball possession, min`,
+                                              Build_Total = Building0ups,
+                                              Lost_Balls = `Lost balls`, 
+                                              Lost_Balls_own = `Lost balls in own half`,
+                                              Second_third = `Entrances on opponent's half`,
+                                              Final_third = `Entrances on final third of opponent's half`,
+                                              Box = `Entrances to the opponent's box`) %>%
+                                       mutate(Conversion = Goals / xG,
+                                              Conversion_Points = Points / Expected_Points,
+                                              Attacks_Shot = Positional_shot + 
+                                                             Counter_shot + Set_Piece_shot,
+                                              Shot_Assist = Key_Passes_acc + Crosses_acc,
+                                              Conversion_Conceded = Goals_Conceded / 
+                                                                    xG_Conceded,
+                                              Imposition = (Duels_def + Duels_ata + Duels_air) - 
+                                                           (Fouls + Red_Card + Yellow_Card),
+                                              Contention = log(Tackles_acc + Recoveries + 
+                                                           Interceptions + Low_press_acc),
+                                              Pressing = Recoveries_High + High_press_acc + 
+                                                         Team_Pressing,
+                                              Ball_Care = log((Passes_acc + Dribbles_acc) - Lost_Balls),
+                                              Passing_Speed = 10* ((Passes / Possession_Quant) / 
+                                                              Time_per_possession),
+                                              Build_Up = Build_Total - Lost_Balls_own,
+                                              Progression = (Second_third - Final_third) +
+                                                            (Final_third - Box)) %>%
+                                       select(Teams, Points, Expected_Points, 
+                                              Conversion_Points, Goals, xG, Attacks_Shot,
+                                              Conversion, Shot_Assist, Goals_Conceded, 
+                                              xG_Conceded, Conversion_Conceded, Shots_Conceded, 
+                                              Contention, Pressing, Imposition, PPDA,
+                                              Possession_Time, Passing_Speed, Ball_Care,
+                                              Build_Up, Progression, Set_Piece_shot,
+                                              Set_Pieces_Conceded)
+```
+
+Abaixo resumo os conceitos utilizados na elaboração das métricas. Vale  
+destacar que eles foram definidos a partir da análise das variáveis e das  
+consequentes possibilidades de manipulação delas; um banco de dados diferente,  
+com outras variáveis que não estas providas pelo InStat, provavelmente exigiria  
+adaptações, incluindo exclusão de alguns e criação de novos. São eles:  
+
+* **Conversion:** razão entre os gols marcados e a expectativa de gol (xG), para  
+privilegiar a eficiência;  
+* **Attacks_Shot:** soma dos chutes realizados em 3 origens distintas de ataques  
+(Posicionais, Transições e Bolas Paradas), o que na execução em si da AFC tem  
+pouca importância, mas pode subsidiar paralelamente gráficos para identificar  
+diferentes estilos de jogo ofensivo;
+* **Shot_Assist:** soma dos passes-decisivos e dos cruzamentos que geraram  
+finalização;  
+* **Conversion_Conceded:** razão entre gols sofridos e expectativa concedida;  
+* **Imposition:** soma das vitórias pessoais em três tipos de duelos listados  
+(ofensivos, defensivos e aéreos), subtraída a soma de três tipos de infrações  
+(faltas cometidas, cartões amarelos e vermelhos recebidos);  
+* **Contention:** soma de quatro ações defensivas listadas: tackles (um item de scout  
+comum nas plataformas dominantes mas que, na prática, não existe no Brasil, onde  
+o conceito disseminado é uma espécie de fusão entre tackles e recoveries - a  
+**Roubada**), recuperações, interceptações e pressão baixa eficiente;  
+* **Pressing:** soma de três ações de pressão listadas: recuperações no campo de  
+ataque, pressão alta eficiente e o que o InStat chama de "team pressing", e que  
+embora vago quando analisado nos vídeos, é uma espécie de "pressão na bola";  
+* **Ball_Care:** relação entre passes certos e dribles certos com as perdas de bola;  
+* **Passing_Speed:** este indicador é uma adaptação do conceito de VEL (velocidade  
+de circulação da bola); sem a cronologia das ações nos dados extraídos, estimei o  
+tempo individual de retenção da bola por jogada através do cruzamento de três  
+variáveis originais: passes certos, quantidade de posses de bola e tempo médio  
+(em segundos) de cada posse;  
+* **Build-up:** subtração entre a variável "construção", disponibilizada nos dados  
+originais, e perdas de bola no próprio campo;  
+* **Progression:** relação entre as quantidades de ingressos da equipe do campo de  
+defesa para o de ataque, do campo de ataque para o terço final, e do terço final  
+para a área adversária;
+* **PPDA:** Passes permitidos por ação defensiva, em inglês, variável que já foi  
+entregue originalmente pelo InStat, sem necessitar de manipulação. Conta a  
+quantidade de passes que o adversário troca na construção até que a equipe realize  
+alguma ação defensiva.
+
+Na AFE as matrizes de variância, covariância e correlação são muito importantes, 
+pois amparam as análises dos testes estatísticos. Nesta técnica ainda não sabemos  
+exatamente como vamos manipular os dados, logo os testes serão os guias do analista  
+para a construção do modelo (quais métricas descartar, quais vão se relacionar, etc).  
+
+```{r message=FALSE, warning=FALSE}
+
+correlation <- cor(Metrics_EFA[ , 2:24])
+
+covariance <- cov(Metrics_EFA[ , 2:24])
+
+variance <- var(Metrics_EFA[ , 2:24])
+```
+
+## Teste de Esfericidade de Bartlett  
+Com p-valor inferior ao nível de significância de 5%, é possível rejeitar a  
+hipótese nula e afirmar que as variáveis têm correlação suficiente para aplicar  
+as técnicas de análise fatorial, de análise de componentes principais ou de  
+regressão. Testadas as 758 observações da matriz de correlações, o p-valor foi  
+igual a zero, o que justifica o procedimento.  
+
+```{r message=FALSE, warning=FALSE}
+
+cortest.bartlett(correlation, n = 758)
+```
+## #KMO (KAISER-MEYER-OLKIN MEASURE OF SAMPLING ADEQUACY)  
+Outro teste para validar a escolha pela Análise Fatorial Exploratória é o KMO,  
+que tem parâmetro a partir de 0.5. Como o valor geral do teste aplicado chegou  
+a 0.68, o KMO reforça que há correlação entre as variáveis.  
+
+```{r message=FALSE, warning=FALSE}
+
+KMO(Metrics_EFA[ , 2:24])
+```
+Dois aspectos chamam a atenção na tabela de valores do teste KMO: os resultados  
+dos indicadores Passing_Speed (uma estimativa de VEL, como já foi explicado) e  
+PPDA. Ambos são conceitos atrelados ao imaginário do futebol moderno, sendo a  
+velocidade de circulação da bola um princípio levado em alta consideração por  
+treinadores simpáticos ao jogo posicional, por exemplo. Estatisticamente, entretanto,  
+a variável Passing_Speed apresentou baixo índice de correlação (apenas 0.31),  
+enquanto o PPDA (um indicador de pressão alta defensiva) não passou de 0.23.  
+
+A baixa correlação do Passing_Speed com este banco de dados do Brasileiro 2021 vai  
+ficar muito evidente no artigo com uma regressão múltipla que vou publicar  
+a seguir, mas já pode ser observada na tabela abaixo. Naturalmente, por ser  
+um indicador com valor inversamente proporcional ao desempenho (quanto menor,  
+melhor), esperava-se que Passing_Speed tivesse correlação negativa com os pontos,  
+porém o valor é de -0.02 na tabela demonstrada abaixo (ou seja, muito próximo de zero).  
+O que permite concluir que **a velocidade de circulação da bola não foi determinante**  
+**para conquistar pontos no Brasileiro.**  
+
+Ainda falando em posse de bola, a variável Possession_Time tem correlação negativa  
+com os pontos (-0.10), também contrariando o conceito vigente de dominação pela  
+posse de bola para obter vitórias - pelo menos, não foi isso que se verificou no  
+Campeonato Brasileiro do ano passado. Na verdade, **ter menor posse de bola que o**  
+**adversário foi mais influente para conquistar pontos**.  
+
+```{r message=FALSE, warning=FALSE}
+
+lowerCor(Metrics_EFA[ , 2:24])
+
+```
+
+##Velocidade de circulação (tempo de retenção) x Tempo de posse  
+
+Abrindo um breve parênteses no processo de AFE, apresento um gráfico de dispersão  
+comparando as variáveis numéricas Passing_Speed (VEL estimada, tempo de retenção,  
+velocidade de circulação, enfim, há várias nomenclaturas possíveis) e Possession_Time.  
+
+Em relação ao código, primeiro extraí apenas as variáveis de interesse e agrupei  
+pelos times, para então executar as funções de estatística descritiva (média de VEL  
+e de posse, e total de pontos).
+
+O campeão Atlético-MG, por exemplo, teve a 2ª retenção mais alta, superado apenas  
+pelo Corinthians, ambos com tempo médio de posse superior a 50% (ou seja, ambos  
+foram dominantes em posse, porém com velocidade baixa de circulação). O São Paulo  
+se aproximou do Atlético-MG nas duas variáveis, porém a performance em pontos foi  
+muito inferior.
+
+Já a Chapecoense, pior equipe do Brasileiro, teve VEL média estimada em menos de  
+2.9 segundos (8ª circulação mais ágil), o que não teve nenhum impacto em sua  
+performance prática.
+
+Palmeiras e Bragantino foram as equipes que conseguiram associar agilidade  
+na circulação da bola, tempo de posse superior e boa performance em pontos,  
+enquanto o Fortaleza se aproximou de ambos mas dividiu o controle da bola  
+com os adversários.
+
+```{r}
+Vel_Possession <- Metrics_EFA %>% group_by(Teams) %>% 
+                                  summarise(VEL=mean(Passing_Speed),
+                                            Posse=mean(Possession_Time),
+                                            Total_Points=sum(Points)) %>%
+                                  mutate(Posse = Posse * 100) %>%
+                                  select(Teams, VEL, Posse, Total_Points) %>%
+                                  mutate_if(is.numeric, round, 2)
+
+
+ggplot(data = Vel_Possession, mapping = aes(x = Posse, y = VEL, fill = Total_Points)) +
+      geom_point(alpha=3, shape=21, size = 2) +
+      geom_text(aes(label = Teams), size = 2, color="black", vjust = -2) +
+      theme_bw() +
+      theme(legend.position="bottom") +
+      labs(title = "Relação entre Posse e Velocidade de Circulação",
+           y = "VEL - tempo estimado de retenção, em segundos",
+           x = "Tempo médio de posse de bola por jogo") +
+      theme(legend.position = "right")
+```
+
+Voltando à AFE, após realizar os testes e analisar a matriz de correlações, o passo  
+seguinte é estimar o número de fatores necessários para melhor sintetizar as informações  
+contidas no banco de dados, com a função de análise paralela (**Parallel Analysis**):  
+
+```{r message=FALSE, warning=FALSE}
+
+fa.parallel(Metrics_EFA[ , 2:24],fm="pa", fa="fa", n.iter=500)
+```
+A linha preta que delimita o auto-valor igual a 1 é o ponto de corte. O parâmetro  
+é estar acima, logo podemos concluir que **4 fatores** são suficientes para  
+analisar este banco de dados, embora um deles esteja no limite, enquanto um 5º  
+fator ficou abaixo do eixo de corte.  
+
+```{r message=FALSE, warning=FALSE}
+fit <- fa(Metrics_EFA[ , 2:24], nfactors = 4, rotate = "Promax", scores = TRUE, fm = "ml")
+
+```
+
+No comando acima, o método de extração escolhido (fm - factor method) foi Maximum  
+Likelihood (ML), depois que uma tentativa com Principal Axis Factor (PA) gerou a  
+mensagem de erro *"The estimated weights for the factor scores are probably incorrect.*    
+*Try a different factor score estimation method"*.  
+
+A rotação escolhida foi oblíqua (Promax) porque assumimos que há correlação entre  
+os fatores, o que é lógico de se imaginar tratando-se de uma análise esportiva (os  
+processos se encadeiam). Caso fosse uma rotação ortogonal, assumiríamos que os  
+fatores não têm relação.  
+
+O fator **ML4** explica 32% dos dados; o **ML2** explica 28% dos dados; e os fatores  
+**ML3** e **ML1** explicam 20% dos dados cada, somando a proporção cumulativa de 100%.  
+
+O índice **TLI** (Tucker-Lewis Index) chegou a **0.564** (ideal é > 0.9) e o **RMSEA**  
+foi de **0.16** (ideal < 0.05). Como já foi dito no artigo com a Análise Fatorial  
+Confirmatória, os modelos de indicadores para futebol aparentam se inclinar para   
+resultados baixos nos índices de ajuste, o que suponho esteja relacionado com a  
+imprevisibilidade de um esporte onde nem sempre o melhor vence, e onde temos   
+inúmeros registros de equipes derrotadas com maior posse, mais finalizações, enfim,   
+melhores indicadores que o adversário. O teste estatístico mede as correlações e   
+não consegue, obviamente, enxergar este contexto próprio do futebol.  
+
+Inspirado em outras pesquisas publicadas, estabeleci o corte de variáveis com  
+cargas de correlação inferiores a 0.30, e criei uma nova matriz com os quatro fatores  
+sugeridos pela EFA, organizados de forma decrescente (das maiores cargas para as menores):  
+
+```{r message=FALSE, warning=FALSE}
+
+print(fit, cut = .30, sort = TRUE, digits = 3)
+
+Pattern_Matrix <- fit$loadings[1:23, ]
+
+fit$Structure[1:23, ]
+
+```
+
+Os nomes dos fatores são determinados pelo pesquisador a partir da análise dos  
+resultados da análise exploratória, ou seja, da identificação das variáveis que  
+têm as maiores cargas em cada um deles. Caso não veja necessidade de nomeá-los,  
+o pesquisador pode apenas manter o padrão da EFA - neste exemplo, os fatores estão  
+batizados como ML, de Maximum Likelihood.
+
+Se esta pesquisa fosse levada adiante e implementada como um método de trabalho,  
+o fator **ML4** poderia ser chamado de **Expectativa**, pois nele as maiores cargas  
+estão relacionadas com **Expected_Points, xG e xG_Conceded**.
+
+O fator **ML2** encontrou a correlação entre as variáveis de **Posse**, e assim poderia  
+ser chamado. As cargas são altas para **Ball_Care, Possession_Time e Build_Up**. Mais  
+uma vez nota-se que a variável **Passing_Speed** não alcançou correlação próxima às   
+demais (0.43, contra 0.96 de Ball_Care, por exemplo).  
+
+O fator **ML3**, ao contrário do ML1, não trata de expectativa, e sim de **Eficiência**,  
+ao correlacionar as variáveis com maior influência para os pontos conquistados, sendo  
+que apenas **Goals e Conversion** apresentam cargas altas, o que valida o dito popular  
+*"futebol é bola na rede"*. Muitas variáveis tiveram cargas próximas a zero, ou seja,  
+mostraram-se quase sem influência para os pontos conquistados no Campeonato Brasileiro.  
+
+E o fator **ML1** é o inverso do ML3, ou seja, ele carrega as variáveis que mais  
+influenciaram na **perda de pontos**. Nota-se que despontam apenas as cargas de   
+**Goals_Conceded e Conversion_Conceded**. Como poderia ser nomeado este fator? Talvez  
+seria o caso de chamar o **ML3** de **Eficiência Ofensiva** e o **ML1** de **Eficiência**  
+**Defensiva**.  
+
+Ao contrário da Análise Fatorial Confirmatória, onde o modelo privilegia aspectos  
+estilísticos, para identificar padrões de comportamento relacionados com o modelo de  
+jogo ds equipes, a Análise Fatorial Exploratória encontrou correlações mais fortes  
+no que diz respeito às conversões (seja de gols feitos ou sofridos, seja de pontos),  
+sendo que apenas o fator **ML2** assemelha-se ao modelo testado na AFC, ao correlacionar  
+as variáveis de posse.
+
+Abaixo apresento o diagrama do modelo resultante:
+
+```{r message=FALSE, warning=FALSE}
+
+fa.diagram(fit, digits = 2, main = "Factor Diagram", 
+           cut = .30, 
+           simple = T, 
+           errors = T)
+```
+
+##Ranking  
+Assim como na análise confirmatória, também é possível rankear as observações (neste  
+caso, as equipes) na análise exploratória. Para isso, mantive a simplicidade matemática,  
+sem criar pesos com multiplicações ou exponenciações. O ranking levará em conta a  
+soma dos 3 fatores positivos (ML4, ML2 e ML3) subtraídos pelo ML1, que tem carga inversa  
+(quanto menor a pontuação obtida, melhor, afinal ele encontra as correlações entre  
+pontos e gols/conversão concedidos).
+
+```{r message=FALSE, warning=FALSE}
+
+Scores <- factor.scores(Metrics_EFA[ , 2:24],fit, 
+                         Phi = NULL, 
+                         method = "tenBerge",
+                         rho=NULL)
+
+Scores <- as.data.frame(Scores$scores)
+
+Scores_Bind <- bind_cols(Metrics_EFA, Scores)
+
+Scores_Bind <- Scores_Bind %>% select(1, 25:28) %>%
+                                 mutate(Ranking = ML4 + ML2 + ML3 - ML1) %>%
+                                 select(Teams, Ranking, everything())
+
+Scores_Final <- Scores_Bind %>% group_by(Teams) %>% 
+                                summarise(Ranking_Total=sum(Ranking),
+                                          ML4_Total=sum(ML4),
+                                          ML2_Total=sum(ML2),
+                                          ML3_Total=sum(ML3),
+                                          ML1_Total=sum(ML1)) %>%
+                                mutate(Expectancy = ML4_Total,
+                                       Possession = ML2_Total,
+                                       Efficiency_Off = ML2_Total,
+                                       Efficiency_Def = ML1_Total) %>%
+                                select(Teams, Ranking_Total, Expectancy, 
+                                       Possession, Efficiency_Off, Efficiency_Def) %>%
+                                mutate_if(is.numeric, round, 2) %>%
+                                arrange(desc(Ranking_Total))
+```
+
+Comparar o resultado da análise confirmatória (cujo link está no 1º parágrafo) e desta  
+análise exploratória é muito interessante e divertido. Novamente o Flamengo liderou  
+em todos os fatores à exceção da posse, mas desta vez a pontuação nos demais fatores  
+foi suficiente para manter a equipe à frente do campeão Atlético-MG.
+
+Chama a atenção o rebaixado Grêmio, que terminou em 7º no ranking geral, e foi o 3º  
+com a maior Expectativa - mais uma vez a ineficiência defensiva da equipe demonstra  
+que este foi o fator determinante para a queda.  
+
+Outro rebaixado, o Bahia, também criou expectativa suficiente para escapar (13º), mas  
+foi o 3º pior em todos os demais fatores - ou seja, ineficiente em todos os processos.  
+O Sport Recife teve situação inversa: destacou-se pela eficiência defensiva (5º) e  
+ficou em posições intermediárias em ataque e posse, porém terminou em 19º no ranking  
+devido à baixíssima expectativa criada - mesmo obtendo performance acima do esperado,  
+não foi o suficente para evitar o rebaixamento.
+
+Na outra ponta da tabela, o São Paulo foi a equipe com a maior diferença entre a  
+classificação no Brasileiro (idêntica à análise confirmatória) e o ranking na análise  
+exploratória (5º melhor, 4º em posse e em ataque, 6º em expectativa e 12º em defesa),  
+indicando que poderia ter obtido melhor colocação no campeonato. Por outro lado, o  
+Fortaleza foi uma equipe que criou alta expectativa (4º maior) e conseguiu confirmar  
+em pontos, que o levaram para a Libertadores mesmo terminando em 11º no ranking da AFE,  
+o que se deve principalmente à baixa eficiência defensiva (17º).
+
+![](/Volumes/Seagate Expansion Drive/Data Science/USP/SoftwareR/Sripts/ranking_efa.png)
+São muitas as considerações possíveis no cruzamento dos resultados das duas análises  
+apresentadas, assim como há outros tantos aspectos inexplorados para não tornar este  
+artigo ainda mais extenso e cansativo. Em breve publicarei os resultados de uma regressão  
+múltipla baseada no mesmo banco de dados.
